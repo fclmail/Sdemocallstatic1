@@ -1,209 +1,334 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Profit Simulation Demo</title>
-<style>
-  body {
-    font-family: Arial, sans-serif;
-    background-color: #0b2b15; /* Dark green background */
-    color: #fff;
-    margin: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  h1 {
-    text-align: center;
-  }
-
-  #wallet {
-    margin: 10px 0;
-  }
-
-  #balance {
-    font-size: 1.2em;
-    margin-top: 5px;
-  }
-
-  #profitDisplay {
-    font-size: 2em;
-    margin: 20px 0;
-    padding: 20px;
-    background-color: #1f4f35; /* slightly lighter for contrast */
-    border-radius: 10px;
-    min-width: 300px;
-    text-align: center;
-  }
-
-  #controls {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-    justify-content: center;
-  }
-
-  input[type=number] {
-    width: 80px;
-  }
-
-  button {
-    padding: 10px 20px;
-    font-size: 16px;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    background-color: #28a745;
-    color: white;
-  }
-
-  button:disabled {
-    background-color: #555;
-    cursor: not-allowed;
-  }
-
-  #status {
-    margin-top: 10px;
-    font-weight: bold;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Arbitrage Demo Page</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers/dist/ethers.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #121212;
+      color: #fff;
+    }
+    h1 {
+      text-align: center;
+    }
+    #wallet-info {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 20px;
+    }
+    #wallet-info div {
+      padding: 10px;
+      background: #222;
+      border-radius: 8px;
+      min-width: 200px;
+      text-align: center;
+    }
+    #logs {
+      max-height: 300px;
+      overflow-y: auto;
+      background: #000;
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .log {
+      margin: 5px 0;
+      padding: 5px 10px;
+      border-radius: 4px;
+      background-color: #00ff00;
+      font-family: monospace;
+      font-size: 14px;
+      transition: background-color 0.3s;
+    }
+    #logs .bright {
+      background-color: #66ff66;
+    }
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    input[type=number] {
+      width: 80px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      background-color: #28a745;
+      color: #fff;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background-color: #218838;
+    }
+    #status {
+      text-align: center;
+      margin: 10px 0;
+      font-weight: bold;
+    }
+    #usdc-balance {
+      font-size: 1.2em;
+      margin-top: 10px;
+    }
+  </style>
 </head>
 <body>
+  <h1>Arbitrage Demo</h1>
+  <div id="wallet-info">
+    <div>
+      <div>Wallet Address</div>
+      <div id="walletAddress">-</div>
+    </div>
+    <div>
+      <div>USDC Balance</div>
+      <div id="usdcBalance">-</div>
+    </div>
+  </div>
+  <div id="status">Status: Idle</div>
+  <div id="logs"></div>
+  <div id="controls">
+    <label>Scan Interval (sec):</label>
+    <input type="number" id="scanInterval" value="10" min="1" max="60"/>
+    <button id="startBtn">Start Scanning</button>
+    <button id="stopBtn" disabled>Stop Scanning</button>
+  </div>
+  <div style="text-align:center;">
+    <label>Min Profit USDC:</label>
+    <input type="number" id="minProfit" value="10" min="1"/>
+  </div>
+  <div id="usdc-balance" style="text-align:center;">USDC Balance: -</div>
 
-<h1>Profit Increasing Balance Demo</h1>
+  <script>
+    // Placeholder variables: Replace with your actual deployed contract info
+    const CONTRACT_ADDRESS = '0xYourContractAddressHere';
+    const CONTRACT_ABI = [/* Your Contract ABI here */];
 
-<!-- Wallet connect button -->
-<button id="connectWalletBtn">Connect Wallet</button>
+    let provider;
+    let signer;
+    let contract;
 
-<div id="wallet" style="display:none;">
-  <div>Wallet Address:</div>
-  <div id="walletAddress">-</div>
-  <div id="balance">USDC Balance: -</div>
-</div>
+    let scanIntervalId = null;
+    let walletAddress = "";
+    let usdcBalance = 0;
 
-<!-- Display for simulated profit -->
-<div id="profitDisplay">Profit: 0.00 USDC</div>
+    // List of tokens and DEX routers to simulate
+    const tokens = ['DAI', 'WETH', 'WBTC', 'AAVE'];
+    const dexPairs = [
+      { name: 'QuickSwap', pairCode: 'Q', routerAddress: '0xQRouter' },
+      { name: 'SushiSwap', pairCode: 'S', routerAddress: '0xSRouter' },
+      { name: 'Dfyn', pairCode: 'D', routerAddress: '0xDRouter' }
+    ];
 
-<!-- Controls -->
-<div id="controls">
-  <label>Scan Interval (sec):</label>
-  <input type="number" id="scanSpeed" value="10" min="1" max="60" />
-  <button id="startBtn">Start Scanning</button>
-  <button id="stopBtn" disabled>Stop Scanning</button>
-  <label style="margin-left:20px;">Min Profit (USDC):</label>
-  <input type="number" id="minProfit" value="10" min="1" />
-</div>
+    const minProfitInput = document.getElementById('minProfit');
+    const scanButton = document.getElementById('startBtn');
+    const stopButton = document.getElementById('stopBtn');
 
-<div id="status">Status: Idle</div>
+    const logsDiv = document.getElementById('logs');
+    const statusDiv = document.getElementById('status');
+    const walletAddressDiv = document.getElementById('walletAddress');
+    const usdcBalanceDiv = document.getElementById('usdcBalance');
+    const usdcBalanceText = document.getElementById('usdc-balance');
 
-<script>
-let provider;
-let signer;
-let walletAddress = '';
-let usdcBalance = 0;
+    const scanIntervalInput = document.getElementById('scanInterval');
 
-// Simulation variables
-let profit = 0;
-let profitIntervalId = null;
+    // Initialize
+    async function init() {
+      if (window.ethereum) {
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        signer = provider.getSigner();
 
-// UI elements
-const connectBtn = document.getElementById('connectWalletBtn');
-const walletDiv = document.getElementById('wallet');
-const walletAddressDiv = document.getElementById('walletAddress');
-const balanceDiv = document.getElementById('balance');
-const profitDiv = document.getElementById('profitDisplay');
-const startBtn = document.getElementById('startBtn');
-const stopBtn = document.getElementById('stopBtn');
-const scanSpeedInput = document.getElementById('scanSpeed');
-const minProfitInput = document.getElementById('minProfit');
-const statusDiv = document.getElementById('status');
+        contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
-async function connectWallet() {
-  if (!window.ethereum) {
-    alert('Please install MetaMask!');
-    return;
-  }
-  try {
-    provider = new ethers.providers.Web3Provider(window.ethereum);
-    await provider.send("eth_requestAccounts", []);
-    signer = provider.getSigner();
-    walletAddress = await signer.getAddress();
+        walletAddress = await signer.getAddress();
+        document.getElementById('walletAddress').textContent = walletAddress;
 
-    walletAddressDiv.textContent = walletAddress;
-    document.getElementById('wallet').style.display = 'block';
+        // Get initial USDC balance
+        await updateUSDCBalance();
 
-    // For demo purposes, generate a mock USDC balance
-    // In real usage, fetch from a USDC token contract:
-    // const usdcContract = new ethers.Contract(usdcAddress, usdcAbi, provider);
-    // const balance = await usdcContract.balanceOf(walletAddress);
-    // usdcBalance = ethers.utils.formatUnits(balance, 6);
-    usdcBalance = 1000.00; // Mock balance
-    balanceDiv.textContent = `USDC Balance: ${usdcBalance.toFixed(2)}`;
-
-    connectBtn.disabled = true;
-    document.getElementById('status').textContent = 'Wallet connected.';
-    startBtn.disabled = false;
-
-  } catch (err) {
-    alert('Error connecting wallet: ' + err.message);
-  }
-}
-
-function updateProfitDisplay() {
-  profitDiv.textContent = `Profit: ${profit.toFixed(2)} USDC`;
-}
-
-function startScanning() {
-  const intervalSec = parseInt(scanSpeedInput.value);
-  if (isNaN(intervalSec) || intervalSec < 1) {
-    alert('Invalid scan interval.');
-    return;
-  }
-  if (profitIntervalId) clearInterval(profitIntervalId);
-  profitIntervalId = setInterval(() => {
-    // Only simulate profit if profit >= min profit
-    const minProfit = parseFloat(minProfitInput.value);
-    // Increase profit: simulate steady gain
-    profit += (Math.random() * 5 + 1); // increase by a random amount between 1-6
-    updateProfitDisplay();
-
-    // Ensure profit does not go below min profit (simulate only upon condition)
-    if (profit >= minProfit) {
-      document.body.style.backgroundColor = '#006400'; // dark green
+        // Setup event listeners
+        scanButton.addEventListener('click', startScanning);
+        stopButton.addEventListener('click', stopScanning);
+      } else {
+        alert('Please install MetaMask!');
+      }
     }
-    document.getElementById('status').textContent = 'Scanning...';
-  }, intervalSec * 1000);
 
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
-  document.getElementById('status').textContent = 'Scanning started.';
-}
+    async function updateUSDCBalance() {
+      // Replace with your USDC token contract address and ABI
+      const USDC_ADDRESS = '0xYourUSDCContract';
+      const USDC_ABI = [
+        "function balanceOf(address owner) view returns (uint256)"
+      ];
+      const usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, provider);
+      const balance = await usdcContract.balanceOf(walletAddress);
+      usdcBalance = ethers.utils.formatUnits(balance, 6); // USDC has 6 decimals
+      usdcBalanceDiv.textContent = usdcBalance;
+      usdcBalanceText.textContent = `USDC Balance: ${usdcBalance}`;
+    }
 
-function stopScanning() {
-  if (profitIntervalId) {
-    clearInterval(profitIntervalId);
-    profitIntervalId = null;
-  }
-  document.getElementById('status').textContent = 'Scanning stopped.';
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  document.body.style.backgroundColor = '#0b2b15'; // reset background
-}
+    function appendLog(message) {
+      const log = document.createElement('div');
+      log.className = 'log';
+      
+      const timestamp = new Date().toLocaleTimeString();
+      log.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
 
-document.getElementById('connectWalletBtn').onclick = connectWallet;
-document.getElementById('startBtn').onclick = startScanning;
-document.getElementById('stopBtn').onclick = stopScanning;
+      logsDiv.appendChild(log);
+      
+      // Animate brightness for logs
+      setTimeout(() => {
+        log.classList.add('bright');
+      }, 100);
+      
+      // Keep logs scrolled to bottom
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
 
-// Initialize
-window.onload = () => {
-  document.getElementById('status').textContent = 'Idle.';
-};
-</script>
+    function setStatus(msg) {
+      statusDiv.textContent = `Status: ${msg}`;
+    }
 
-<!-- Include ethers.js library -->
-<script src="https://cdn.jsdelivr.net/npm/ethers/dist/ethers.min.js"></script>
+    async function performScan() {
+      setStatus('Scanning...');
+      const minProfitThreshold = ethers.utils.parseUnits(minProfitInput.value, 6); // USDC with 6 decimals
+      let profitableFound = false;
+
+      for (const token of tokens) {
+        for (const dex1 of dexPairs) {
+          for (const dex2 of dexPairs) {
+            if (dex1.name === dex2.name) continue; // Skip same routes
+
+            // Simulate the estimation via callStatic
+            try {
+              // Replace with your actual callStatic function
+              // e.g., callStaticEstimateProfit(token, dex1, dex2)
+              const estimatedProfit = await contract.callStatic.estimateProfit(
+                token,
+                dex1.routerAddress,
+                dex2.routerAddress,
+                ethers.utils.parseUnits('100', 18) // sample trade amount
+              );
+
+              if (estimatedProfit.gte(minProfitThreshold)) {
+                appendLog(`🚨 Profitable arbitrage detected! Token: ${token}, Profit: ${ethers.utils.formatUnits(estimatedProfit,6)} USDC, Path: ${dex1.name} → ${dex2.name}`);
+
+                // Turn logs green brighter
+                highlightLogs();
+
+                // Send transaction to execute arbitrage
+                await executeArbitrage(token, dex1, dex2, estimatedProfit);
+                profitableFound = true;
+                break; // proceed to next detection or stop if preferred
+              } else {
+                appendLog(`Low profit for ${token} on ${dex1.name}→${dex2.name}: ${ethers.utils.formatUnits(estimatedProfit,6)} USDC`);
+              }
+            } catch (err) {
+              appendLog(`Error estimating profit for ${token} on ${dex1.name}→${dex2.name}: ${err.message}`);
+            }
+          }
+          if (profitableFound) break;
+        }
+        if (profitableFound) break;
+      }
+
+      if (!profitableFound) {
+        setStatus('No profitable arbitrage found');
+        // Reset logs brightness if needed
+        resetLogBrightness();
+      }
+    }
+
+    function highlightLogs() {
+      Array.from(logsDiv.children).forEach(log => {
+        log.classList.add('bright');
+      });
+    }
+
+    function resetLogBrightness() {
+      Array.from(logsDiv.children).forEach(log => {
+        log.classList.remove('bright');
+      });
+    }
+
+    async function executeArbitrage(token, dex1, dex2, profitEstimate) {
+      setStatus('Executing arbitrage...');
+      // Turn logs even brighter
+      Array.from(logsDiv.children).forEach(log => {
+        log.classList.add('bright');
+      });
+      
+      try {
+        // Call your contract's executeArbitrage
+        const tx = await contract.executeArbitrage(
+          token,
+          dex1.routerAddress,
+          dex2.routerAddress,
+          ethers.utils.parseUnits('100', 18), // trade amount
+          { gasLimit: 300000 } // adjust gas limit as needed
+        );
+
+        appendLog(`🔄 Transaction sent: ${tx.hash}`);
+        // Wait for transaction receipt
+        const receipt = await tx.wait();
+
+        // Check for success
+        if (receipt.status === 1) {
+          appendLog(`✅ Arbitrage successful! Tx: ${tx.hash}`);
+          setStatus('Arbitrage executed successfully');
+        } else {
+          appendLog(`❌ Transaction failed: ${tx.hash}`);
+          setStatus('Transaction failed');
+        }
+        // Emitted event logs can be parsed here if you include event filtering
+        // For demonstration, assume event contains profit info
+        // update USDC balance
+        await updateUSDCBalance();
+
+        // Show success log with profit
+        appendLog(`🎉 Profit of ${ethers.utils.formatUnits(profitEstimate,6)} USDC sent to your wallet`);
+        turnBrighterGreen();
+      } catch (err) {
+        appendLog(`Error during arbitrage execution: ${err.message}`);
+        turnNormalGreen();
+      }
+    }
+
+    function turnBrighterGreen() {
+      document.querySelector('body').style.backgroundColor = '#00ff00';
+    }
+    function turnNormalGreen() {
+      document.querySelector('body').style.backgroundColor = '#00cc00';
+    }
+
+    function startScanning() {
+      if (scanIntervalId) clearInterval(scanIntervalId);
+      scanIntervalId = setInterval(performScan, scanIntervalInput.value * 1000);
+      scanButton.disabled = true;
+      stopButton.disabled = false;
+      setStatus('Scanning started');
+      performScan(); // run immediately
+    }
+
+    function stopScanning() {
+      clearInterval(scanIntervalId);
+      scanIntervalId = null;
+      scanButton.disabled = false;
+      stopButton.disabled = true;
+      setStatus('Scanning stopped');
+    }
+
+    // Initialize on page load
+    window.onload = init;
+  </script>
 </body>
 </html>
