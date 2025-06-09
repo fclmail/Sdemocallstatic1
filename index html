@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Arbitrage Demo Page</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers/dist/ethers.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #121212;
+      color: #fff;
+      margin: 20px;
+    }
+    h1 {
+      text-align: center;
+    }
+    #wallet-info {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 20px;
+    }
+    #wallet-info div {
+      padding: 10px;
+      background: #222;
+      border-radius: 8px;
+      min-width: 200px;
+      text-align: center;
+    }
+    #logs {
+      max-height: 300px;
+      overflow-y: auto;
+      background: #000;
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .log {
+      margin: 5px 0;
+      padding: 5px 10px;
+      border-radius: 4px;
+      background-color: #00ff00;
+      font-family: monospace;
+      font-size: 14px;
+      transition: background-color 0.3s;
+    }
+    .bright {
+      background-color: #66ff66;
+    }
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    input[type=number] {
+      width: 80px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      background-color: #28a745;
+      color: #fff;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background-color: #218838;
+    }
+    button:disabled {
+      background-color: #555;
+      cursor: not-allowed;
+    }
+    #status {
+      text-align: center;
+      margin: 10px 0;
+      font-weight: bold;
+    }
+    #usdc-balance {
+      font-size: 1.2em;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Arbitrage Demo</h1>
+  
+  <!-- Connect Wallet Button -->
+  <div style="text-align:center; margin-bottom:20px;">
+    <button id="connectBtn">Connect Wallet</button>
+  </div>
+
+  <div id="wallet-info" style="display:none;">
+    <div>
+      <div>Wallet Address</div>
+      <div id="walletAddress">-</div>
+    </div>
+    <div>
+      <div>USDC Balance</div>
+      <div id="usdcBalance">-</div>
+    </div>
+  </div>
+
+  <div id="status">Status: Idle</div>
+  
+  <div id="logs"></div>
+  
+  <div id="controls">
+    <label>Scan Interval (sec):</label>
+    <input type="number" id="scanInterval" value="10" min="1" max="60"/>
+    <button id="startBtn" disabled>Start Scanning</button>
+    <button id="stopBtn" disabled>Stop Scanning</button>
+  </div>
+  
+  <div style="text-align:center;">
+    <label>Min Profit USDC:</label>
+    <input type="number" id="minProfit" value="10" min="1"/>
+  </div>
+  
+  <div id="usdc-balance" style="text-align:center;">USDC Balance: -</div>
+
+  <script>
+    // Placeholder variables: Replace with your actual contract info
+    const CONTRACT_ADDRESS = '0xYourContractAddressHere';
+    const CONTRACT_ABI = [/* Your Contract ABI here */];
+
+    // USDC token address (replace with actual)
+    const USDC_ADDRESS = '0xYourUSDCContract';
+
+    let provider;
+    let signer;
+    let contract;
+
+    let walletAddress = "";
+    let usdcBalance = 0;
+
+    // List of tokens & DEXs
+    const tokens = ['DAI', 'WETH', 'WBTC', 'AAVE'];
+    const dexPairs = [
+      { name: 'QuickSwap', routerAddress: '0xQRouter' },
+      { name: 'SushiSwap', routerAddress: '0xSRouter' },
+      { name: 'Dfyn', routerAddress: '0xDRouter' }
+    ];
+
+    let scanIntervalId = null;
+
+    // UI elements
+    const connectBtn = document.getElementById('connectBtn');
+    const walletDiv = document.querySelector('#wallet-info');
+    const walletAddressDiv = document.getElementById('walletAddress');
+    const usdcBalanceDiv = document.getElementById('usdcBalance');
+    const logsDiv = document.getElementById('logs');
+    const statusDiv = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const scanIntervalInput = document.getElementById('scanInterval');
+    const minProfitInput = document.getElementById('minProfit');
+    const usdcBalanceText = document.getElementById('usdc-balance');
+
+    // Initialize
+    async function init() {
+      // Initiate connect on button click
+      connectBtn.addEventListener('click', connectWallet);
+      startBtn.addEventListener('click', startScanning);
+      stopBtn.addEventListener('click', stopScanning);
+    }
+
+    // Connect wallet function
+    async function connectWallet() {
+      if (window.ethereum) {
+        try {
+          provider = new ethers.providers.Web3Provider(window.ethereum);
+          await provider.send("eth_requestAccounts", []);
+          signer = provider.getSigner();
+          walletAddress = await signer.getAddress();
+          
+          // Show wallet info UI
+          document.querySelector('#wallet-info').style.display = 'flex';
+          
+          // Display address
+          walletAddressDiv.textContent = walletAddress;
+
+          // Initialize contract
+          contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+          // Load USDC balance
+          await updateUSDCBalance();
+
+          // Enable start scanning
+          startBtn.disabled = false;
+          connectBtn.disabled = true;
+
+          appendLog('Wallet connected.');
+
+        } catch (err) {
+          alert('Failed to connect wallet: ' + err.message);
+        }
+      } else {
+        alert('Please install MetaMask!');
+      }
+    }
+
+    async function updateUSDCBalance() {
+      // Load USDC token contract
+      const usdcAbi = ["function balanceOf(address owner) view returns (uint256)"];
+      const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcAbi, provider);
+      const balance = await usdcContract.balanceOf(walletAddress);
+      usdcBalance = ethers.utils.formatUnits(balance, 6); // USDC has 6 decimals
+      usdcBalanceDiv.textContent = usdcBalance;
+      usdcBalanceText.textContent = `USDC Balance: ${usdcBalance}`;
+    }
+
+    function appendLog(message) {
+      const log = document.createElement('div');
+      log.className = 'log';
+      const timestamp = new Date().toLocaleTimeString();
+      log.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+      logsDiv.appendChild(log);
+      setTimeout(() => log.classList.add('bright'), 100);
+
+      // Auto-scroll logs
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    function setStatus(msg) {
+      statusDiv.textContent = `Status: ${msg}`;
+    }
+
+    // Main scan function
+    async function performScan() {
+      setStatus('Scanning...');
+      const minProfitThreshold = ethers.utils.parseUnits(minProfitInput.value, 6);
+      let foundProfit = false;
+
+      // Loop through tokens and pairs (simulate)
+      for (const token of tokens) {
+        for (const dex1 of dexPairs) {
+          for (const dex2 of dexPairs) {
+            if (dex1.name === dex2.name) continue;
+
+            try {
+              // Call static estimate (simulate)
+              const estimatedProfit = await contract.callStatic.estimateProfit(
+                token,
+                dex1.routerAddress,
+                dex2.routerAddress,
+                ethers.utils.parseUnits('100', 18) // example amount
+              );
+
+              if (estimatedProfit.gte(minProfitThreshold)) {
+                appendLog(`🚨 Profitable arbitrage detected! Token: ${token}, Profit: ${ethers.utils.formatUnits(estimatedProfit,6)} USDC, Path: ${dex1.name} → ${dex2.name}`);
+                highlightLogs();
+                await executeArbitrage(token, dex1, dex2, estimatedProfit);
+                foundProfit = true;
+                break;
+              } else {
+                appendLog(`Low profit for ${token} on ${dex1.name}→${dex2.name}: ${ethers.utils.formatUnits(estimatedProfit,6)} USDC`);
+              }
+            } catch (err) {
+              appendLog(`Error estimate for ${token} on ${dex1.name}→${dex2.name}: ${err.message}`);
+            }
+          }
+          if (foundProfit) break;
+        }
+        if (foundProfit) break;
+      }
+
+      if (!foundProfit) {
+        setStatus('No profitable arbitrage found');
+        resetLogBrightness();
+      }
+    }
+
+    function highlightLogs() {
+      Array.from(logsDiv.children).forEach(log => log.classList.add('bright'));
+    }
+
+    function resetLogBrightness() {
+      Array.from(logsDiv.children).forEach(log => log.classList.remove('bright'));
+    }
+
+    async function executeArbitrage(token, dex1, dex2, profitEstimate) {
+      setStatus('Executing arbitrage...');
+      // Turn logs bright
+      Array.from(logsDiv.children).forEach(log => log.classList.add('bright'));
+
+      try {
+        // Call your arbitrage execution function
+        const tx = await contract.executeArbitrage(
+          token,
+          dex1.routerAddress,
+          dex2.routerAddress,
+          ethers.utils.parseUnits('100', 18),
+          { gasLimit: 300000 }
+        );
+
+        appendLog(`🔄 Transaction sent: ${tx.hash}`);
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          appendLog(`✅ Arbitrage successful! Tx: ${tx.hash}`);
+          setStatus('Arbitrage executed successfully');
+        } else {
+          appendLog(`❌ Transaction failed: ${tx.hash}`);
+          setStatus('Transaction failed');
+        }
+        // Update USDC balance after execution
+        await updateUSDCBalance();
+
+        // Log profit info
+        appendLog(`🎉 Profit of ${ethers.utils.formatUnits(profitEstimate,6)} USDC sent to your wallet`);
+        turnBrighterGreen();
+
+      } catch (err) {
+        appendLog(`Error during arbitrage: ${err.message}`);
+        turnNormalGreen();
+      }
+    }
+
+    function turnBrighterGreen() {
+      document.body.style.backgroundColor = '#00ff00';
+    }
+    function turnNormalGreen() {
+      document.body.style.backgroundColor = '#00cc00';
+    }
+
+    function startScanning() {
+      if (scanIntervalId) clearInterval(scanIntervalId);
+      scanIntervalId = setInterval(performScan, scanIntervalInput.value * 1000);
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      setStatus('Scanning started');
+      performScan(); // run immediately
+    }
+
+    function stopScanning() {
+      clearInterval(scanIntervalId);
+      scanIntervalId = null;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      setStatus('Scanning stopped');
+    }
+
+    // Initialize on page load
+    window.onload = init;
+  </script>
+</body>
+</html>
